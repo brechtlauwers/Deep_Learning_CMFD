@@ -1,12 +1,15 @@
 import cv2
+
 from statistical.surf import SurfExtractor
 from statistical.matching import FeatureMatching
-import torch
-from torchvision import datasets, transforms
+import deep_learning.vgg16 as vgg16
+
+import torch.nn as nn
+import torch.optim as optim
 from torch.utils.data import DataLoader
 
-
 def main():
+    # statistical()
     deep_learning()
 
 
@@ -15,6 +18,8 @@ def statistical():
 
     surf = SurfExtractor(image)
     kp, desc = surf.extract_features()
+    print(desc)
+    print(desc.shape)
     matching = FeatureMatching(kp, desc)
     p1, p2 = matching.match()
 
@@ -33,17 +38,11 @@ def statistical():
 
 
 def deep_learning():
-    gt = []
-    with open("/home/brechtl/Pictures/Data/MICC/MICC-F2000/groundtruthDB_2000.txt") as GT_file:
-        for line in GT_file:
-            gt += [line.split()]
-
-    transform = transforms.Compose([transforms.Resize(300),
-                                    transforms.ToTensor()])
-
-    dataset = datasets.ImageFolder("/home/brechtl/Pictures/Data/MICC/MICC-F2000", transform=transform)
-
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    # model = vgg16.VGG()
+    # loss_fn = nn.BCELoss()
+    # optimizer = optim.SGD(model.parameters(), lr=0.001)  # momentum=0.9
+    # vgg16.make_train_step(model, loss_fn, optimizer)
+    vgg16.train()
 
 
 if __name__ == '__main__':
