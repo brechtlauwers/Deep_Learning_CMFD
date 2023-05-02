@@ -38,11 +38,7 @@ def statistical():
 
 
 def deep_learning():
-    # model = vgg16.VGG()
-    # loss_fn = nn.BCELoss()
-    # optimizer = optim.SGD(model.parameters(), lr=0.001)  # momentum=0.9
-    # vgg16.make_train_step(model, loss_fn, optimizer)
-    vgg16.train()
+    vgg16.start()
 
 
 if __name__ == '__main__':
