@@ -8,7 +8,7 @@ import numpy as np
 
 from pytorch_model_summary import summary
 
-from torchvision import datasets, transforms, models
+from torchvision import models
 from torch.utils.data import DataLoader, random_split
 from torchvision.utils import save_image
 
@@ -83,9 +83,7 @@ def VGG():
 def make_train_step(model, loss_fn, optimizer):
     def train_step(x, y):
         optimizer.zero_grad()  # Clear the gradients
-
         model.train()
-
         yres = model(x)  # Compute model output
         loss = loss_fn(yres, y)  # Calculate loss
         loss.backward()  # Backpropagating the error
@@ -97,37 +95,83 @@ def make_train_step(model, loss_fn, optimizer):
 def start():
     print(DEVICE)
 
+    if DEVICE == "cuda":
+        torch.cuda.synchronize()  # wait for move to complete
+        start_timer = torch.cuda.Event(enable_timing=True)
+        end_timer = torch.cuda.Event(enable_timing=True)
+    else:
+        start_timer, end_timer = None, None
+
     model = VGG()
     model = model.to(DEVICE)
     # print(model)
     loss_fn = nn.BCEWithLogitsLoss()
-    # optimizer = optim.SGD(model.parameters(), lr=0.0001)
-    optimizer = optim.Adam(model.parameters(), lr=0.0001)
-    train_step = make_train_step(model, loss_fn, optimizer)
+    optimizer = optim.SGD(model.parameters(), lr=0.0001)
+    # optimizer = optim.Adam(model.parameters(), lr=0.0001)
 
-    transform = transforms.Compose([transforms.Resize((224, 224)),
-                                    transforms.ToTensor(),
-                                    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+    dataset = functions.load_data()
 
-    dataset = datasets.ImageFolder("/home/brechtl/Pictures/Data/MICC/MICC-F2000", transform=transform)
-    train_data, test_data = random_split(dataset, [1600, 400])
+    # Train size -> 80%
+    # Test size -> 20%
+    train_size = int(len(dataset) * 8 / 10)
+    test_size = int(len(dataset) - train_size)
 
-    train_loader = DataLoader(dataset=train_data, batch_size=80, shuffle=True)
-    test_loader = DataLoader(dataset=test_data, batch_size=40, shuffle=True)
+    print(f'Total amount of images: {len(dataset)}')
+    print(f'Train size: {train_size}')
+    print(f'Test size: {test_size}')
 
-    loss = None
-    losses = []
-    val_losses = []
+    labels = 0
+    for _, target in dataset:
+        labels += target
+    print(labels)
+
+    train_data, test_data = random_split(dataset, [train_size, test_size])
+
+    train_loader = DataLoader(dataset=train_data, batch_size=40, shuffle=True)
+    test_loader = DataLoader(dataset=test_data, batch_size=20, shuffle=True)
+
+    epochs = 50
+
+    if DEVICE == "cuda":
+        start_timer.record()
+
+    model, losses, val_losses = train(model, loss_fn, optimizer, epochs,
+                                      train_loader, test_loader, train_size, test_size)
+    if DEVICE == "cuda":
+        end_timer.record()
+        torch.cuda.synchronize()
+
+    total_time = round(start_timer.elapsed_time(end_timer) / 1000.0, 2)
+
+    print(f'Total training time: {total_time}s')
+
+    torch.save(model.state_dict(), 'vgg16_best.pt')
+    functions.draw_plot(losses, val_losses)
+
+    # Evaluate best model
+    functions.evaluate_model(test_loader, model)
+
+
+def train(model, loss_fn, optimizer, epochs, train_loader, test_loader, train_size, test_size):
     all_accuracies = []
-    epochs = 30
+    losses, val_losses = [], []
+    loss = 0
     best_accuracy = -np.Inf
     best_model = None
+    train_step = make_train_step(model, loss_fn, optimizer)
+
+    # Early stopping
+    last_loss = 100
+    patience = 5
+    triggertimes = 0
 
     # functions.evaluate_model(test_loader, model)
 
     for epoch in range(epochs):
         correct = 0
-        for x_batch, y_batch in train_loader:
+        running_loss = 0
+
+        for counter, (x_batch, y_batch) in enumerate(train_loader, 1):
             # unsqeeze the tensor to add another dimension
             x_batch = x_batch.to(torch.float32)
             x_batch = x_batch.to(DEVICE)  # move to gpu
@@ -135,31 +179,35 @@ def start():
             y_batch = y_batch.to(DEVICE)  # move to gpu
 
             loss, output = train_step(x_batch, y_batch)
-            losses.append(loss)
+            running_loss += loss * x_batch.size(0)
             # print("loss: " + str(loss))
-            # print(output)
             output = torch.sigmoid(output)
             output = output > 0.5
             # print(output)
 
+            if counter % 5 == 0 or counter == len(train_loader):
+                print('[{}/{}, {}/{}] loss: {:.8}'.format(epoch, epochs, counter, len(train_loader), loss))
+
             correct += (output == y_batch).float().sum()
 
-        accuracy = 100 * correct / len(train_data)
+        losses.append(running_loss / train_size)
+        accuracy = 100 * correct / train_size
         all_accuracies.append(accuracy)
 
-        # Evaluate the model with test data
-        with torch.no_grad():
-            for x_val, y_val in test_loader:
-                x_val = x_val.to(torch.float32)
-                x_val = x_val.to(DEVICE)
-                y_val = y_val.to(torch.float32).unsqueeze(-1)
-                y_val = y_val.to(DEVICE)
+        val_loss = validation(model, loss_fn, test_loader, test_size)
+        val_losses.append(val_loss)
 
-                model.eval()
+        # Early stopping
+        if val_loss > last_loss:
+            triggertimes += 1
+            print(f'Trigger times: {triggertimes}')
 
-                yhat = model(x_val)
-                val_loss = loss_fn(yhat, y_val)
-                val_losses.append(val_loss.item())
+            if triggertimes >= patience:
+                print(f'Early stopping!')
+                print(f'Best accuracy: {best_accuracy}')
+                return best_model, losses, val_losses
+
+        last_loss = val_loss
 
         print('epoch {}, loss: {}, val loss: {}, acc: {}'.format(epoch, loss, val_loss, accuracy))
 
@@ -173,6 +221,24 @@ def start():
                 best_accuracy = max(all_accuracies)
                 best_model = copy.deepcopy(model)
 
-    torch.save(best_model.state_dict(), 'vgg16_best.pt')
-    functions.draw_plot(losses, val_losses)
-    functions.evaluate_model(test_loader, model)
+    print(f'Best accuracy: {best_accuracy}')
+    return best_model, losses, val_losses
+
+
+def validation(model, loss_fn, test_loader, test_size):
+    running_val_loss = 0
+    # Evaluate the model with test data
+    with torch.no_grad():
+        for x_val, y_val in test_loader:
+            x_val = x_val.to(torch.float32)
+            x_val = x_val.to(DEVICE)
+            y_val = y_val.to(torch.float32).unsqueeze(-1)
+            y_val = y_val.to(DEVICE)
+
+            model.eval()
+
+            yhat = model(x_val)
+            val_loss = loss_fn(yhat, y_val).detach().cpu().numpy()
+            running_val_loss += val_loss * x_val.size(0)
+
+    return running_val_loss / test_size
