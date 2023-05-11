@@ -1,12 +1,14 @@
 import copy
+
+import torchvision.utils
+
 import deep_learning.functions as functions
+from torchvision import datasets, transforms
 
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import numpy as np
-
-from pytorch_model_summary import summary
 
 from torchvision import models
 from torch.utils.data import DataLoader, random_split
@@ -22,7 +24,10 @@ class CMFD_VGG16(nn.Module):
     def __init__(self, vgg_pt):
         super(CMFD_VGG16, self).__init__()
         self.vgg_pt = vgg_pt
-        self.new_layers = nn.Sequential(nn.Linear(4096, 1))
+        self.new_layers = nn.Sequential(nn.Linear(25088, 1028),
+                                        nn.Dropout(p=0.4),
+                                        nn.BatchNorm1d(1028),
+                                        nn.Linear(1028, 2))
 
     def forward(self, x):
         x = self.vgg_pt(x)
@@ -33,49 +38,20 @@ class CMFD_VGG16(nn.Module):
 def VGG():
     # VGG-16 takes 224x224 images as input
 
-    # transform = transforms.Compose([transforms.Resize((224, 224)),
-    #                                 transforms.ToTensor(),
-    #                                 transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
-    #
-    # dataset = datasets.ImageFolder("/home/brechtl/Pictures/Data/MICC/MICC-F2000", transform=transform)
-    #
-    # dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    # Use the best up-to-date weights
+    vgg_pt = models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_FEATURES)
 
-    # Run this to test data loader
-    # images, labels = next(iter(dataloader))
-    # save_image(images[0], "original.png")
+    # Drop the classification part
+    # vgg_pt.classifier = nn.Sequential(*[vgg_pt.classifier[i] for i in range(0)])
+    vgg_pt.classifier = nn.Sequential()
+    # vgg_pt.features = nn.Sequential(*[vgg_pt.features[i] for i in range(17)])
 
-    vgg_pt = models.vgg16(weights=models.VGG16_Weights.DEFAULT)
-    # Cut layers from the model
-
-    # vgg_pt_prediction = vgg_pt.features(images[0].unsqueeze(0))
-    # vgg_pt_prediction = torch.squeeze(vgg_pt_prediction)
-
-    # print(vgg_pt_prediction)
-    # print(vgg_pt_prediction.shape)
-    # print(vgg_pt.classifier)
-    # print(summary(vgg_pt, images[0].unsqueeze(0), show_input=False))
-    # print(vgg_pt)
-
-    # gray_scale = torch.sum(vgg_pt_prediction, 0)
-    # gray_scale = gray_scale / vgg_pt_prediction.shape[0]
-    # gray_scale = gray_scale.detach().numpy()
-    # print(gray_scale.shape)
-    # plt.imshow(gray_scale)
-    # plt.savefig("feature_map.png", bbox_inches='tight', pad_inches=0)
-
-    vgg_pt.classifier = nn.Sequential(*[vgg_pt.classifier[i] for i in range(6)])
-
+    # Freeze all the layers
     for param in vgg_pt.parameters():
         param.requires_grad = False
 
-    # vgg_pt.classifier._modules['6'] = nn.Linear(4096, 1)
-    # vgg_pt.classifier._modules['7'] = nn.Sigmoid
-
+    # Add new classification layer to model for cross entropy classification
     my_vgg = CMFD_VGG16(vgg_pt=vgg_pt)
-    # images, labels = next(iter(dataloader))
-    # print(summary(my_vgg, images[0].unsqueeze(0), show_input=False))
-    # print(my_vgg)
 
     return my_vgg
 
@@ -85,7 +61,11 @@ def make_train_step(model, loss_fn, optimizer):
         optimizer.zero_grad()  # Clear the gradients
         model.train()
         yres = model(x)  # Compute model output
-        loss = loss_fn(yres, y)  # Calculate loss
+
+        # print(yres)
+        # print(y.flatten().long())
+
+        loss = loss_fn(yres, y.flatten().long())  # Calculate loss
         loss.backward()  # Backpropagating the error
         optimizer.step()  # Update parameters (weights)
         return loss.item(), yres
@@ -104,12 +84,14 @@ def start():
 
     model = VGG()
     model = model.to(DEVICE)
-    # print(model)
-    loss_fn = nn.BCEWithLogitsLoss()
-    optimizer = optim.SGD(model.parameters(), lr=0.0001)
-    # optimizer = optim.Adam(model.parameters(), lr=0.0001)
+    print(model)
+    # loss_fn = nn.BCEWithLogitsLoss()
+    loss_fn = nn.CrossEntropyLoss()
+    # print(model.new_layers[3])
+    optimizer = optim.SGD(model.parameters(), lr=0.00002, momentum=0.9)
+    # optimizer = optim.Adam(model.parameters(), lr=0.00002)
 
-    dataset = functions.load_data()
+    dataset, class_weights = functions.load_data()
 
     # Train size -> 80%
     # Test size -> 20%
@@ -120,23 +102,30 @@ def start():
     print(f'Train size: {train_size}')
     print(f'Test size: {test_size}')
 
-    labels = 0
-    for _, target in dataset:
-        labels += target
-    print(labels)
-
     train_data, test_data = random_split(dataset, [train_size, test_size])
 
-    train_loader = DataLoader(dataset=train_data, batch_size=40, shuffle=True)
-    test_loader = DataLoader(dataset=test_data, batch_size=20, shuffle=True)
+    targets = [label for _, label in train_data]
 
-    epochs = 50
+    class_weights_all = class_weights[targets]
+    weighted_sampler = torch.utils.data.WeightedRandomSampler(weights=class_weights_all,
+                                                              num_samples=len(class_weights_all),
+                                                              replacement=True)
+
+    train_loader = DataLoader(dataset=train_data, batch_size=64, shuffle=False, sampler=weighted_sampler)
+    test_loader = DataLoader(dataset=test_data, batch_size=50, shuffle=True)
+
+    # functions.visualize_image(model, test_loader)
+    # functions.visualize_model(model, test_loader)
+
+    epochs = 100
 
     if DEVICE == "cuda":
         start_timer.record()
 
+    print("Training started...")
     model, losses, val_losses = train(model, loss_fn, optimizer, epochs,
                                       train_loader, test_loader, train_size, test_size)
+
     if DEVICE == "cuda":
         end_timer.record()
         torch.cuda.synchronize()
@@ -146,7 +135,8 @@ def start():
     print(f'Total training time: {total_time}s')
 
     torch.save(model.state_dict(), 'vgg16_best.pt')
-    functions.draw_plot(losses, val_losses)
+    # functions.draw_plot(losses, val_losses)
+    # functions.visualize_model(model, test_loader)
 
     # Evaluate best model
     functions.evaluate_model(test_loader, model)
@@ -165,8 +155,6 @@ def train(model, loss_fn, optimizer, epochs, train_loader, test_loader, train_si
     patience = 5
     triggertimes = 0
 
-    # functions.evaluate_model(test_loader, model)
-
     for epoch in range(epochs):
         correct = 0
         running_loss = 0
@@ -181,14 +169,16 @@ def train(model, loss_fn, optimizer, epochs, train_loader, test_loader, train_si
             loss, output = train_step(x_batch, y_batch)
             running_loss += loss * x_batch.size(0)
             # print("loss: " + str(loss))
-            output = torch.sigmoid(output)
-            output = output > 0.5
+            # output = torch.sigmoid(output)
+            _, preds = torch.max(output.data, 1)
             # print(output)
 
-            if counter % 5 == 0 or counter == len(train_loader):
+            if counter % 10 == 0 or counter == len(train_loader):
                 print('[{}/{}, {}/{}] loss: {:.8}'.format(epoch, epochs, counter, len(train_loader), loss))
 
-            correct += (output == y_batch).float().sum()
+            # print(preds)
+            # print(y_batch.flatten().long())
+            correct += (preds == y_batch.flatten().long()).float().sum()
 
         losses.append(running_loss / train_size)
         accuracy = 100 * correct / train_size
@@ -198,13 +188,17 @@ def train(model, loss_fn, optimizer, epochs, train_loader, test_loader, train_si
         val_losses.append(val_loss)
 
         # Early stopping
-        if val_loss > last_loss:
+        if val_loss < last_loss:
+            triggertimes = 0
+        else:
             triggertimes += 1
             print(f'Trigger times: {triggertimes}')
 
             if triggertimes >= patience:
                 print(f'Early stopping!')
                 print(f'Best accuracy: {best_accuracy}')
+                if best_accuracy < max(all_accuracies):
+                    best_model = copy.deepcopy(model)
                 return best_model, losses, val_losses
 
         last_loss = val_loss
@@ -238,7 +232,7 @@ def validation(model, loss_fn, test_loader, test_size):
             model.eval()
 
             yhat = model(x_val)
-            val_loss = loss_fn(yhat, y_val).detach().cpu().numpy()
+            val_loss = loss_fn(yhat, y_val.flatten().long()).detach().cpu().numpy()
             running_val_loss += val_loss * x_val.size(0)
 
     return running_val_loss / test_size

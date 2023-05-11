@@ -1,6 +1,8 @@
 import cv2
+from sklearn.cluster import DBSCAN
 from scipy.spatial.distance import pdist
 from scipy.cluster import hierarchy
+from collections import Counter
 import numpy as np
 import matplotlib.pyplot as plt
 import glob
@@ -60,7 +62,7 @@ class FeatureMatching:
         # perform agglomerative hierarchical clustering
         cluster = hierarchy.fcluster(z, t=threshold, criterion='inconsistent', depth=4)
         # filter outliers
-        # cluster, points = filterOutliers(cluster, points)
+        cluster, points = self.filterOutliers(cluster, points)
 
         n = int(np.shape(points)[0]/2)
         return cluster, points[:n], points[n:]
@@ -83,3 +85,45 @@ class FeatureMatching:
 
         plt.savefig("results.png", bbox_inches='tight', pad_inches=0)
         plt.clf()
+
+    def filterOutliers(self, cluster, points):
+        cluster_count = Counter(cluster)
+        to_remove = []  # find clusters that does not have more than 6 points (remove them)
+        for key in cluster_count:
+            if cluster_count[key] <= 6:
+                to_remove.append(key)
+
+        indices = np.array([])  # find indices of points that corresponds to the cluster that needs to be removed
+
+        for i in range(len(to_remove)):
+            indices = np.concatenate([indices, np.where(cluster == to_remove[i])], axis=None)
+
+        indices = indices.astype(int)
+        indices = sorted(indices, reverse=True)
+
+        for i in range(len(indices)):  # remove points that belong to each unwanted cluster
+            points = np.delete(points, indices[i], axis=0)
+
+        for i in range(len(to_remove)):  # remove unwanted clusters
+            cluster = cluster[cluster != to_remove[i]]
+
+        return cluster, points
+
+    def locateForgery(self, image, eps=40, min_sample=2):
+        clusters = DBSCAN(eps=eps, min_samples=min_sample).fit(self.desc)
+        size = np.unique(clusters.labels_).shape[0] - 1
+        forgery = image.copy()
+        if (size == 0) and (np.unique(clusters.labels_)[0] == -1):
+            return None
+        if size == 0:
+            size = 1
+        cluster_list = [[] for i in range(size)]
+        for idx in range(len(self.kp)):
+            if clusters.labels_[idx] != -1:
+                cluster_list[clusters.labels_[idx]].append(
+                    (int(self.kp[idx].pt[0]), int(self.kp[idx].pt[1])))
+        for points in cluster_list:
+            if len(points) > 1:
+                for idx1 in range(1, len(points)):
+                    cv2.line(forgery, points[0], points[idx1], (255, 0, 0), 5)
+        return forgery

@@ -1,7 +1,7 @@
 import cv2
 
 
-class SurfExtractor:
+class SiftExtractor:
     image = None
 
     def __init__(self, image):
