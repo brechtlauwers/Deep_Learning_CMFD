@@ -25,8 +25,8 @@ class CMFD_VGG16(nn.Module):
         super(CMFD_VGG16, self).__init__()
         self.vgg_pt = vgg_pt
         self.new_layers = nn.Sequential(nn.Linear(25088, 1028),
-                                        nn.Dropout(p=0.4),
-                                        nn.BatchNorm1d(1028),
+                                        nn.Dropout(p=0.5),
+                                        # nn.BatchNorm1d(1028),
                                         nn.Linear(1028, 2))
 
     def forward(self, x):
@@ -39,7 +39,7 @@ def VGG():
     # VGG-16 takes 224x224 images as input
 
     # Use the best up-to-date weights
-    vgg_pt = models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_FEATURES)
+    vgg_pt = models.vgg16(weights=models.VGG16_Weights.DEFAULT)
 
     # Drop the classification part
     # vgg_pt.classifier = nn.Sequential(*[vgg_pt.classifier[i] for i in range(0)])
@@ -88,9 +88,8 @@ def start():
     # loss_fn = nn.BCEWithLogitsLoss()
     loss_fn = nn.CrossEntropyLoss()
     # print(model.new_layers[3])
-    optimizer = optim.SGD(model.parameters(), lr=0.00002, momentum=0.9)
+    optimizer = optim.SGD(model.parameters(), lr=0.00001, momentum=0.9)
     # optimizer = optim.Adam(model.parameters(), lr=0.00002)
-
     dataset, class_weights = functions.load_data()
 
     # Train size -> 80%
@@ -112,10 +111,10 @@ def start():
                                                               replacement=True)
 
     train_loader = DataLoader(dataset=train_data, batch_size=64, shuffle=False, sampler=weighted_sampler)
-    test_loader = DataLoader(dataset=test_data, batch_size=50, shuffle=True)
+    test_loader = DataLoader(dataset=test_data, batch_size=32, shuffle=True)
 
     # functions.visualize_image(model, test_loader)
-    # functions.visualize_model(model, test_loader)
+    functions.visualize_model(model, test_loader)
 
     epochs = 100
 

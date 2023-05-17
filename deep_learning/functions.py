@@ -21,22 +21,21 @@ def load_data():
     transform = transforms.Compose([transforms.Resize((256, 256), interpolation=InterpolationMode.BILINEAR),
                                     transforms.CenterCrop(224),
                                     transforms.ToTensor(),
-                                    transforms.Normalize(mean=[0.48235, 0.45882, 0.40784],
-                                                         std=[0.00392156862745098, 0.00392156862745098,
-                                                              0.00392156862745098])])
+                                    transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                                         std=[0.229, 0.224, 0.225])])
 
     # MICC-F2000
-    dataset_l.append(datasets.ImageFolder("/home/brechtl/Pictures/Data/MICC/MICC-F2000", transform=transform))
+    # dataset_l.append(datasets.ImageFolder("/home/brechtl/Pictures/Data/MICC/MICC-F2000", transform=transform))
     # MICC-F220
     dataset_l.append(datasets.ImageFolder("/home/brechtl/Pictures/Data/MICC/MICC-F220", transform=transform))
     # CoMoFoD
-    dataset_l.append(datasets.ImageFolder("/home/brechtl/Pictures/Data/CoMoFoD_small_v2/", transform=transform))
+    # dataset_l.append(datasets.ImageFolder("/home/brechtl/Pictures/Data/CoMoFoD_small_v2/", transform=transform))
     # CASIAv1
-    dataset_l.append(datasets.ImageFolder("/home/brechtl/Pictures/Data/CASIA/CASIA1/", transform=transform))
+    # dataset_l.append(datasets.ImageFolder("/home/brechtl/Pictures/Data/CASIA/CASIA1/", transform=transform))
     # CASIAv2
-    dataset_l.append(datasets.ImageFolder("/home/brechtl/Pictures/Data/CASIA/CASIA2/", transform=transform))
+    # dataset_l.append(datasets.ImageFolder("/home/brechtl/Pictures/Data/CASIA/CASIA2/", transform=transform))
     # GRIP
-    dataset_l.append(datasets.ImageFolder("/home/brechtl/Pictures/Data/GRIP/", transform=transform))
+    # dataset_l.append(datasets.ImageFolder("/home/brechtl/Pictures/Data/GRIP/", transform=transform))
 
     dataset = torch.utils.data.ConcatDataset(dataset_l)
 
@@ -127,7 +126,7 @@ def visualize_model(model, test_loader, num_images=6):
             x_val = x_val.to(DEVICE)
             y_val = y_val[:num_images].to(torch.float32).unsqueeze(-1).flatten().long()
             y_val = y_val.to(DEVICE)
-            print(summary(model, x_val[0].unsqueeze(0), show_input=True))
+            print(summary(model, x_val[0].unsqueeze(0), show_input=False))
 
             outputs = model(x_val)
             _, preds = torch.max(outputs.data, 1)
